@@ -5,10 +5,24 @@ import io
 from datetime import datetime
 import difflib
 
-st.set_page_config(page_title="Zoho Invoice CSV Generator", layout="centered")
+# 1. Page Config
+st.set_page_config(
+    page_title="Zoho Sales Order Generator",
+    page_icon="🍳",
+    layout="centered"
+)
 
-st.title("👨‍🍳 Menu Engineering to Zoho Invoice Converter")
-st.write("Upload your menu Excel report. The matching engine will force-map every item to your Zoho master list to ensure correct pricing.")
+# 2. Hide Streamlit Branding & GitHub Logo
+st.markdown("""
+    <style>
+    header {visibility: hidden;}
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    </style>
+    """, unsafe_allow_html=True)
+
+st.title("👨‍🍳 Menu Engineering to Zoho Sales Order Converter")
+st.write("Upload your menu Excel report to generate a Zoho-compliant Sales Order CSV.")
 
 ZOHO_MASTER = {
     "preparing pesto sauce": {"exact_name": "preparing pesto SAUCE", "rate": 113.75, "sku": "110"},
@@ -100,32 +114,31 @@ if menu_file:
         with st.spinner("Processing report and force-matching items..."):
             raw_df = pd.read_excel(menu_file, header=None)
             date_range_str = str(raw_df.iloc[2, 1]) if len(raw_df) > 2 else "Unknown Date"
-            branch_name = str(raw_df.iloc[3, 1]) if len(raw_df) > 3 else "Unknown Branch"
+            branch_name = str(raw_df.iloc[3, 1]).strip() if len(raw_df) > 3 else "Unknown Branch"
 
             dates = re.findall(r'\d{4}-\d{2}-\d{2}', date_range_str)
             start_date = dates[0] if len(dates) > 0 else datetime.today().strftime('%Y-%m-%d')
             end_date = dates[1] if len(dates) > 1 else start_date
 
             timestamp = datetime.now().strftime('%Y%m%d%H%M')
-            unique_invoice_num = f"INV-{re.sub(r'[^a-zA-Z0-9]', '', branch_name)[:5].upper()}-{timestamp}"
+            unique_so_num = f"SO-{re.sub(r'[^a-zA-Z0-9]', '', branch_name)[:5].upper()}-{timestamp}"
 
             data_df = pd.read_excel(menu_file, header=5)
             clean_df = data_df[['Product', 'Quantity']].dropna(subset=['Product', 'Quantity'])
             clean_df['Quantity'] = pd.to_numeric(clean_df['Quantity'], errors='coerce').fillna(0).astype(int)
             clean_df = clean_df[clean_df['Quantity'] > 0]
 
-            invoice_rows = []
+            salesorder_rows = []
             
             for _, row in clean_df.iterrows():
                 excel_name = str(row['Product']).strip()
                 quantity = row['Quantity']
                 clean_excel_key = clean_lookup_key(excel_name)
 
-                # 1. Direct match check
+                # Matching logic
                 if clean_excel_key in clean_master:
                     target_item = clean_master[clean_excel_key]
                 else:
-                    # 2. Containment check fallback
                     found_match = None
                     for m_key in master_keys:
                         if clean_excel_key in m_key or m_key in clean_excel_key:
@@ -135,7 +148,6 @@ if menu_file:
                     if found_match:
                         target_item = found_match
                     else:
-                        # 3. Maximum-Probability Match Fallback (Guarantees every line gets a product mapping)
                         best_key = None
                         best_score = -1.0
                         for m_key in master_keys:
@@ -145,21 +157,53 @@ if menu_file:
                                 best_key = m_key
                         target_item = clean_master[best_key]
 
-                invoice_rows.append({
-                    'Invoice Date': start_date,
-                    'Invoice Number': unique_invoice_num,
-                    'Invoice Status': 'Draft',
+                # Zoho Sales Order schema layout matching sample_salesorders.csv
+                salesorder_rows.append({
+                    'Order Date': start_date,
+                    'Shipping Date': end_date,
+                    'SalesOrder Number': unique_so_num,
+                    'Status': 'draft',
                     'Customer Name': 'Walk-in Customer',
+                    'PurchaseOrder': '',
+                    'Template Name': 'Standard Template',
+                    'Currency Code': 'EGP',
+                    'Exchange Rate': 1,
+                    'Discount Type': 'item_level',
+                    'Is Discount BeforeTax': True,
+                    'Entity Discount Percent': 0,
                     'Item Name': target_item['exact_name'],
                     'SKU': target_item['sku'],
+                    'Item Desc': target_item['exact_name'],
                     'Quantity': quantity,
+                    'Usage unit': '',
                     'Item Price': target_item['rate'],
-                    'cf_location': branch_name,
-                    'cf_start_date': start_date,
-                    'cf_end_date': end_date
+                    'Is Inclusive Tax': False,
+                    'Discount': 0,
+                    'Discount Amount': 0,
+                    'Item Tax': '',
+                    'Item Tax %': 0,
+                    'Item Tax Type': '',
+                    'Shipping Charge': 0,
+                    'Adjustment': 0,
+                    'Adjustment Description': '',
+                    'Sales Person': '',
+                    'Notes': '',
+                    'Terms & Conditions': '',
+                    'Delivery Method': '',
+                    'Custom Field Value1': '',
+                    'Custom Field Value2': '',
+                    'Custom Field Value3': '',
+                    'Custom Field Value4': '',
+                    'Custom Field Value5': '',
+                    'Custom Field Value6': '',
+                    'Custom Field Value7': '',
+                    'Custom Field Value8': '',
+                    'Custom Field Value9': '',
+                    'Custom Field Value10': '',
+                    'Warehouse Name': branch_name
                 })
 
-            output_df = pd.DataFrame(invoice_rows)
+            output_df = pd.DataFrame(salesorder_rows)
             
             csv_buffer = io.StringIO()
             output_df.to_csv(csv_buffer, index=False, encoding='utf-8')
@@ -167,13 +211,13 @@ if menu_file:
             
             safe_filename = re.sub(r'[^a-zA-Z0-9]', '', branch_name)[:15].lower()
 
-        st.success(f"🎉 Processed {len(output_df)} items for {branch_name} successfully!")
+        st.success(f"🎉 Processed {len(output_df)} items for location '{branch_name}' successfully!")
         st.dataframe(output_df, use_container_width=True)
         
         st.download_button(
-            label="📥 Download Zoho Invoice CSV",
+            label="📥 Download Zoho Sales Order CSV",
             data=csv_data,
-            file_name=f"zoho_invoice_{safe_filename}.csv",
+            file_name=f"zoho_sales_order_{safe_filename}.csv",
             mime="text/csv"
         )
 
